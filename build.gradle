@@ -3,7 +3,7 @@ plugins {
     id 'org.jetbrains.kotlin.android' version '1.9.22'
 }
 
-tasks.register('prepareFlatResources') {
+tasks.register('prepareFlatSources') {
     doLast {
         def xmlDir = file("$buildDir/flatRes/xml")
         xmlDir.mkdirs()
@@ -11,10 +11,18 @@ tasks.register('prepareFlatResources') {
             from 'method.xml'
             into xmlDir
         }
+        def srcDir = file("$buildDir/flatSrc")
+        srcDir.mkdirs()
+        copy {
+            from('.') {
+                include '*.kt'
+            }
+            into srcDir
+        }
     }
 }
 
-preBuild.dependsOn prepareFlatResources
+preBuild.dependsOn prepareFlatSources
 
 android {
     namespace 'com.bbexperience.launcher'
@@ -34,7 +42,7 @@ android {
     sourceSets {
         main {
             manifest.srcFile 'AndroidManifest.xml'
-            java.srcDirs = ['.']
+            java.srcDirs = ["$buildDir/flatSrc"]
             res.srcDirs = ["$buildDir/flatRes"]
         }
     }
