@@ -305,13 +305,13 @@ fun BBExperienceApp(
                                 onLaunch = onAppClick
                             )
                         }
-                        "SETTINGS" -> {
+                            "SETTINGS" -> {
                             BBSettingsScreen(
                                 allApps = allApps,
                                 hiddenPackages = hiddenPackages,
                                 keyboardScale = keyboardScale,
                                 themeMode = themeMode,
-                                wallpaperIndex = wallpaperIdx,
+                                wallpaperIndex = wallpaperIndex,
                                 prefs = prefs,
                                 onScaleChange = onScaleChange,
                                 onThemeModeChange = onThemeModeChange,
