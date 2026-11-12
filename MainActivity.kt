@@ -355,21 +355,18 @@ fun BBExperienceApp(
                 )
             }
 
-            // Slide-Out Productivity DOC Drawer
-            AnimatedVisibility(
-                visible = isSliderDocOpen,
-                enter = slideInHorizontally(initialOffsetX = { it }),
-                exit = slideOutHorizontally(targetOffsetX = { it }),
-                modifier = Modifier.align(Alignment.CenterEnd)
-            ) {
-                BBSliderDocPanel(
-                    allApps = allApps,
-                    onAppClick = {
-                        onToggleSliderDoc(false)
-                        onAppClick(it)
-                    },
-                    onClose = { onToggleSliderDoc(false) }
-                )
+           // Slide-Out Productivity DOC Drawer
+            if (isSliderDocOpen) {
+                Box(modifier = Modifier.align(Alignment.CenterEnd)) {
+                    BBSliderDocPanel(
+                        allApps = allApps,
+                        onAppClick = {
+                            onToggleSliderDoc(false)
+                            onAppClick(it)
+                        },
+                        onClose = { onToggleSliderDoc(false) }
+                    )
+                }
             }
 
             // 4. FIRST-RUN PROMPT TO INSTALL REQUIRED BLACKBERRY APPS
