@@ -35,7 +35,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Dedicated App Drawer Icon Alias so user can always open BB Settings & Companion Installer -->
+        <!-- App Drawer Launcher Icon -->
         <activity-alias
             android:name=".BBSettingsLauncherAlias"
             android:targetActivity=".MainActivity"
@@ -48,7 +48,7 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- System-wide BlackBerry KEY2 Keyboard Service with Flow Glide Typing -->
+        <!-- System-wide BlackBerry KEY2 Keyboard Service -->
         <service
             android:name=".BBKeyboardService"
             android:label="BB KEY2 Keyboard"

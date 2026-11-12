@@ -3,6 +3,10 @@ package com.bbexperience.launcher
 import android.inputmethodservice.InputMethodService
 import android.view.KeyEvent
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -21,6 +25,9 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
     private lateinit var prefs: BBPreferences
     private val predictionEngine = BBPredictionEngine()
 
+    private var activeWordState by mutableStateOf("")
+    private var previousWordState by mutableStateOf("")
+
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val savedStateRegistry: SavedStateRegistry
         get() = savedStateRegistryController.savedStateRegistry
@@ -31,6 +38,33 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
         prefs = BBPreferences(this)
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+    }
+
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+        super.onStartInputView(info, restarting)
+        syncCursorWords()
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int, oldSelEnd: Int,
+        newSelStart: Int, newSelEnd: Int,
+        candidatesStart: Int, candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        syncCursorWords()
+    }
+
+    private fun syncCursorWords() {
+        val before = currentInputConnection?.getTextBeforeCursor(50, 0)?.toString() ?: ""
+        val separators = charArrayOf(' ', '\n', '\t', ',', '.', ';', ':', '!', '?')
+        val lastSep = before.lastIndexOfAny(separators)
+        val curr = if (lastSep == -1) before else before.substring(lastSep + 1)
+        val priorText = if (lastSep <= 0) "" else before.substring(0, lastSep).trimEnd()
+        val prevSep = priorText.lastIndexOfAny(separators)
+        val prev = if (prevSep == -1) priorText else priorText.substring(prevSep + 1)
+
+        activeWordState = curr
+        previousWordState = prev
     }
 
     override fun onCreateInputView(): View {
@@ -46,26 +80,34 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
                     vibrator = vibrator,
                     predictionEngine = predictionEngine,
                     keyboardScale = prefs.keyboardScale,
-                    getCurrentWord = { getCurrentComposingWord() },
+                    currentWordContext = activeWordState,
+                    previousWordContext = previousWordState,
+                    getCurrentWord = { activeWordState },
+                    getPreviousWord = { previousWordState },
                     onCommitText = { text ->
                         vibrator.keyClick()
                         currentInputConnection?.commitText(text, 1)
+                        syncCursorWords()
                     },
                     onDelete = {
                         vibrator.keyClick()
                         handleDelete()
+                        syncCursorWords()
                     },
                     onSpace = {
                         vibrator.keyClick()
                         currentInputConnection?.commitText(" ", 1)
+                        syncCursorWords()
                     },
                     onEnter = {
                         vibrator.keyClick()
                         handleEnter()
+                        syncCursorWords()
                     },
                     onSwipeLeftDeleteWord = {
                         vibrator.keyClick()
                         deleteLastWord()
+                        syncCursorWords()
                     },
                     onCursorMove = { delta ->
                         vibrator.trackpadTick()
@@ -74,22 +116,19 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
                     onApplyPrediction = { word ->
                         vibrator.keyClick()
                         replaceCurrentWord(word)
+                        syncCursorWords()
                     }
                 )
             }
         }
     }
 
-    private fun getCurrentComposingWord(): String {
-        val textBefore = currentInputConnection?.getTextBeforeCursor(30, 0)?.toString() ?: ""
-        val lastSeparator = textBefore.lastIndexOfAny(charArrayOf(' ', '\n', '\t', ',', '.', ';', ':', '!', '?'))
-        return if (lastSeparator == -1) textBefore else textBefore.substring(lastSeparator + 1)
-    }
-
     private fun replaceCurrentWord(newWord: String) {
         val ic = currentInputConnection ?: return
-        val current = getCurrentComposingWord()
-        ic.deleteSurroundingText(current.length, 0)
+        syncCursorWords()
+        if (activeWordState.isNotEmpty()) {
+            ic.deleteSurroundingText(activeWordState.length, 0)
+        }
         ic.commitText("$newWord ", 1)
     }
 
@@ -125,9 +164,9 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
 
     private fun handleEnter() {
         val ic = currentInputConnection ?: return
-        val options = currentInputEditorInfo.imeOptions
-        val action = options and android.view.inputmethod.EditorInfo.IME_MASK_ACTION
-        if (action != 0 && (options and android.view.inputmethod.EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0) {
+        val options = currentInputEditorInfo?.imeOptions ?: 0
+        val action = options and EditorInfo.IME_MASK_ACTION
+        if (action != 0 && (options and EditorInfo.IME_FLAG_NO_ENTER_ACTION) == 0) {
             ic.performEditorAction(action)
         } else {
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))

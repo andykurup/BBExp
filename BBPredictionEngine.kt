@@ -19,16 +19,37 @@ class BBPredictionEngine {
         "give", "day", "most", "us", "end", "send", "find", "mind", "kind",
         "email", "meeting", "call", "urgent", "blackberry", "keyboard",
         "thanks", "regards", "please", "schedule", "project", "update",
-        "review", "today", "tomorrow", "confirmed", "attached", "client"
+        "review", "today", "tomorrow", "confirmed", "attached", "client",
+        "hello", "hi", "hey", "great", "sure", "okay", "yes", "done",
+        "check", "report", "team", "office", "home", "number", "address",
+        "morning", "afternoon", "evening", "week", "month", "minutes"
+    )
+
+    private val nextWordMap = mapOf(
+        "hi" to listOf("there", "team", "everyone"),
+        "hello" to listOf("there", "team", "how"),
+        "thank" to listOf("you", "you!", "for"),
+        "thanks" to listOf("for", "a", "again"),
+        "please" to listOf("find", "let", "check"),
+        "let" to listOf("me", "us", "know"),
+        "let's" to listOf("meet", "schedule", "discuss"),
+        "i" to listOf("am", "will", "have"),
+        "we" to listOf("are", "will", "can"),
+        "can" to listOf("you", "we", "i"),
+        "will" to listOf("be", "send", "update"),
+        "on" to listOf("my", "the", "time"),
+        "in" to listOf("the", "a", "touch"),
+        "at" to listOf("the", "your", "office"),
+        "good" to listOf("morning", "afternoon", "work")
     )
 
     private val emojiMap = mapOf(
         "fire" to "🔥", "love" to "❤️", "ok" to "👌", "good" to "👍",
         "smile" to "😊", "check" to "✅", "call" to "📞", "mail" to "✉️",
-        "work" to "💼", "coffee" to "☕", "car" to "🚗", "star" to "⭐"
+        "work" to "💼", "coffee" to "☕", "car" to "🚗", "star" to "⭐",
+        "thanks" to "🙏", "yes" to "👍", "done" to "✅"
     )
 
-    // Normalized QWERTY coordinates (x in 0..10, y in 0..2) for geometric Flow/Glide matching
     private val keyCoords = mapOf(
         'q' to Pair(0.5f, 0f), 'w' to Pair(1.5f, 0f), 'e' to Pair(2.5f, 0f), 'r' to Pair(3.5f, 0f),
         't' to Pair(4.5f, 0f), 'y' to Pair(5.5f, 0f), 'u' to Pair(6.5f, 0f), 'i' to Pair(7.5f, 0f),
@@ -40,25 +61,38 @@ class BBPredictionEngine {
         'b' to Pair(5.5f, 2f), 'n' to Pair(6.5f, 2f), 'm' to Pair(7.5f, 2f)
     )
 
-    fun getPredictions(prefix: String): List<String> {
-        if (prefix.isBlank()) return emptyList()
-        val clean = prefix.lowercase()
+    fun getPredictions(currentWord: String, previousWord: String = ""): List<String> {
+        val clean = currentWord.trim().lowercase()
+        if (clean.isEmpty()) {
+            val prevClean = previousWord.trim().lowercase()
+            return nextWordMap[prevClean] ?: listOf("I", "The", "Hi")
+        }
 
         val results = mutableListOf<String>()
         emojiMap[clean]?.let { results.add(it) }
 
-        val matches = dictionary.filter { it.startsWith(clean) && it != clean }
-            .sortedBy { it.length }
-            .take(3 - results.size)
+        val prefixMatches = dictionary
+            .filter { it.startsWith(clean, ignoreCase = true) }
+            .sortedWith(compareBy({ !it.equals(clean, ignoreCase = true) }, { it.length }))
 
-        results.addAll(matches)
-        return results
+        for (match in prefixMatches) {
+            if (results.size >= 3) break
+            if (!results.contains(match)) results.add(match)
+        }
+
+        if (results.size < 3 && clean.length >= 2) {
+            val fuzzy = dictionary
+                .filter { it.length in (clean.length - 1)..(clean.length + 1) && it.first() == clean.first() }
+                .sortedBy { levenshtein(clean, it) }
+            for (cand in fuzzy) {
+                if (results.size >= 3) break
+                if (!results.contains(cand)) results.add(cand)
+            }
+        }
+
+        return results.take(3)
     }
 
-    /**
-     * Resolves a swiped key trail (e.g. ['e', 'f', 'd'] or ['e', 'r', 'd', 'f', 'd'])
-     * to the closest matching dictionary words using first/last key anchoring + spatial path distance.
-     */
     fun matchFlowGesture(swipedKeys: List<Char>): List<String> {
         if (swipedKeys.size < 2) return emptyList()
         val cleanTrail = swipedKeys.map { it.lowercaseChar() }.filter { keyCoords.containsKey(it) }
@@ -69,8 +103,8 @@ class BBPredictionEngine {
 
         val candidates = dictionary.filter { word ->
             word.length >= 2 &&
-                isNearKey(word.first(), startChar, 1.3f) &&
-                isNearKey(word.last(), endChar, 1.3f)
+                isNearKey(word.first(), startChar, 1.35f) &&
+                isNearKey(word.last(), endChar, 1.35f)
         }
 
         return candidates.sortedBy { word ->
@@ -93,5 +127,18 @@ class BBPredictionEngine {
             totalError += hypot(expectedCoord.first - actualCoord.first, expectedCoord.second - actualCoord.second)
         }
         return totalError / word.length
+    }
+
+    private fun levenshtein(a: String, b: String): Int {
+        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
+        for (i in 0..a.length) dp[i][0] = i
+        for (j in 0..b.length) dp[0][j] = j
+        for (i in 1..a.length) {
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                dp[i][j] = minOf(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost)
+            }
+        }
+        return dp[a.length][b.length]
     }
 }

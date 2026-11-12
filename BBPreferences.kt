@@ -12,7 +12,7 @@ class BBPreferences(context: Context) {
         set(value) = prefs.edit().putFloat("keyboard_scale", value.coerceIn(0.75f, 1.35f)).apply()
 
     var themeMode: String
-        get() = prefs.getString("theme_mode", "BBOS7") ?: "BBOS7" // "BBOS7" or "BB10"
+        get() = prefs.getString("theme_mode", "BBOS7") ?: "BBOS7"
         set(value) = prefs.edit().putString("theme_mode", value).apply()
 
     var wallpaperIndex: Int
@@ -22,6 +22,16 @@ class BBPreferences(context: Context) {
     var hasDismissedCompanionPrompt: Boolean
         get() = prefs.getBoolean("dismissed_companion_prompt", false)
         set(value) = prefs.edit().putBoolean("dismissed_companion_prompt", value).apply()
+
+    fun initializeDefaultHomeFilter(allApps: List<AppItem>) {
+        if (!prefs.getBoolean("initialized_home_filter_v2", false)) {
+            val defaultHidden = allApps.filter { it.isSocialOrGame }.map { it.packageName }.toSet()
+            prefs.edit()
+                .putStringSet("hidden_home_packages", defaultHidden)
+                .putBoolean("initialized_home_filter_v2", true)
+                .apply()
+        }
+    }
 
     fun getHiddenHomePackages(): Set<String> {
         return prefs.getStringSet("hidden_home_packages", emptySet()) ?: emptySet()

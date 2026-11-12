@@ -25,7 +25,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
 
 @Composable
 fun BBKey2FullKeyboard(
@@ -33,7 +32,10 @@ fun BBKey2FullKeyboard(
     predictionEngine: BBPredictionEngine,
     keyboardScale: Float = 1.0f,
     onScaleChange: ((Float) -> Unit)? = null,
-    getCurrentWord: () -> String,
+    currentWordContext: String = "",
+    previousWordContext: String = "",
+    getCurrentWord: (() -> String)? = null,
+    getPreviousWord: (() -> String)? = null,
     onCommitText: (String) -> Unit,
     onDelete: () -> Unit,
     onSpace: () -> Unit,
@@ -47,28 +49,30 @@ fun BBKey2FullKeyboard(
     var isShiftActive by remember { mutableStateOf(false) }
     var isSpeedKeyActive by remember { mutableStateOf(false) }
     var showEmojiSheet by remember { mutableStateOf(false) }
-    var activeWord by remember { mutableStateOf("") }
-    var predictions by remember { mutableStateOf(listOf<String>()) }
     var isSpaceScrubbing by remember { mutableStateOf(false) }
     var scrubAccumulator by remember { mutableFloatStateOf(0f) }
 
-    // Flow / Glide Typing State
+    var localWordBuffer by remember { mutableStateOf("") }
+    var localPrevWord by remember { mutableStateOf("") }
+    var predictions by remember {
+        mutableStateOf(predictionEngine.getPredictions(currentWordContext, previousWordContext))
+    }
+
     var deckSize by remember { mutableStateOf(IntSize(1, 1)) }
     val flowTrail = remember { mutableStateListOf<Char>() }
 
     val keyHeight: Dp = (44f * keyboardScale).coerceIn(32f, 60f).dp
     val fontSizeSp = (13f * keyboardScale).coerceIn(10f, 17f).sp
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            if (flowTrail.isEmpty()) {
-                val word = getCurrentWord()
-                if (word != activeWord) {
-                    activeWord = word
-                    predictions = predictionEngine.getPredictions(word)
-                }
-            }
-            delay(100)
+    fun refreshSuggestions(overrideCurrent: String? = null, overridePrev: String? = null) {
+        val active = overrideCurrent ?: getCurrentWord?.invoke() ?: currentWordContext.ifEmpty { localWordBuffer }
+        val prev = overridePrev ?: getPreviousWord?.invoke() ?: previousWordContext.ifEmpty { localPrevWord }
+        predictions = predictionEngine.getPredictions(active, prev)
+    }
+
+    LaunchedEffect(currentWordContext, previousWordContext) {
+        if (flowTrail.isEmpty()) {
+            refreshSuggestions(currentWordContext, previousWordContext)
         }
     }
 
@@ -99,13 +103,23 @@ fun BBKey2FullKeyboard(
         }
     }
 
+    fun handleCharacterTyped(charStr: String) {
+        onCommitText(charStr)
+        if (charStr.length == 1 && charStr[0].isLetter()) {
+            localWordBuffer += charStr
+        } else {
+            if (localWordBuffer.isNotEmpty()) localPrevWord = localWordBuffer
+            localWordBuffer = ""
+        }
+        refreshSuggestions(localWordBuffer, localPrevWord)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF0C0D0F))
             .padding(horizontal = 4.dp, vertical = 2.dp)
     ) {
-        // Optional Drag Resize Handle for Keyboard Height
         if (onScaleChange != null) {
             Box(
                 modifier = Modifier
@@ -128,11 +142,11 @@ fun BBKey2FullKeyboard(
             }
         }
 
-        // 1. GBOARD / BB SUGGESTION STRIP (Swipe-Up to Select + Flow Candidates)
+        // GBOARD-STYLE LIVE SUGGESTION BAR
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(36.dp)
+                .height(38.dp)
                 .background(Color(0xFF14161A)),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -149,7 +163,7 @@ fun BBKey2FullKeyboard(
                 Text(if (showEmojiSheet) "ABC" else "😀", fontSize = 15.sp, color = Color.White)
             }
 
-            if (predictions.isEmpty() && flowTrail.isNotEmpty()) {
+            if (flowTrail.isNotEmpty() && predictions.isEmpty()) {
                 Text(
                     text = "Flow: ${flowTrail.joinToString("")}",
                     color = Color(0xFFD4AF37),
@@ -157,29 +171,48 @@ fun BBKey2FullKeyboard(
                     modifier = Modifier.padding(start = 8.dp)
                 )
             } else {
-                predictions.take(3).forEach { cand ->
+                predictions.take(3).forEachIndexed { index, cand ->
                     var dragY by remember { mutableFloatStateOf(0f) }
+                    val isTopMatch = index == 0
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight()
+                            .padding(horizontal = 2.dp, vertical = 3.dp)
+                            .background(
+                                if (isTopMatch) Color(0xFF212630) else Color.Transparent,
+                                RoundedCornerShape(6.dp)
+                            )
                             .pointerInput(cand) {
                                 detectDragGestures(
                                     onDrag = { _, delta -> dragY += delta.y },
                                     onDragEnd = {
-                                        if (dragY < -18f) {
+                                        if (dragY < -16f) {
                                             onApplyPrediction(cand)
+                                            localPrevWord = cand
+                                            localWordBuffer = ""
+                                            refreshSuggestions("", cand)
                                         }
                                         dragY = 0f
                                     }
                                 )
                             }
-                            .clickable { onApplyPrediction(cand) },
+                            .clickable {
+                                onApplyPrediction(cand)
+                                localPrevWord = cand
+                                localWordBuffer = ""
+                                refreshSuggestions("", cand)
+                            },
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("▲", fontSize = 6.sp, color = Color(0xFFD4AF37))
-                            Text(cand, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                            Text("▲", fontSize = 6.sp, color = if (isTopMatch) Color(0xFFD4AF37) else Color(0xFF6B7280))
+                            Text(
+                                text = cand,
+                                color = if (isTopMatch) Color.White else Color(0xFFD1D5DB),
+                                fontSize = 13.sp,
+                                fontWeight = if (isTopMatch) FontWeight.Bold else FontWeight.Medium
+                            )
                         }
                     }
                 }
@@ -188,14 +221,13 @@ fun BBKey2FullKeyboard(
 
         if (showEmojiSheet) {
             BBEmojiMatrix(
-                onSelectEmoji = { emoji -> onCommitText(emoji) },
+                onSelectEmoji = { emoji -> handleCharacterTyped(emoji) },
                 onClose = {
                     vibrator.keyClick()
                     showEmojiSheet = false
                 }
             )
         } else {
-            // Letter Rows Container with Flow/Glide Gesture Detection
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -227,7 +259,9 @@ fun BBKey2FullKeyboard(
                                             bestWord.replaceFirstChar { it.uppercase() }
                                         } else bestWord
                                         onCommitText("$formatted ")
-                                        predictions = matches
+                                        localPrevWord = formatted
+                                        localWordBuffer = ""
+                                        predictions = predictionEngine.getPredictions("", formatted)
                                         isShiftActive = false
                                     }
                                 }
@@ -256,8 +290,9 @@ fun BBKey2FullKeyboard(
                                     onShortcutTriggered(char)
                                     isSpeedKeyActive = false
                                 } else {
-                                    onCommitText(keyChar)
+                                    handleCharacterTyped(keyChar)
                                     isAltActive = false
+                                    if (isShiftActive) isShiftActive = false
                                 }
                             }
                         )
@@ -283,8 +318,9 @@ fun BBKey2FullKeyboard(
                                     onShortcutTriggered(char)
                                     isSpeedKeyActive = false
                                 } else {
-                                    onCommitText(keyChar)
+                                    handleCharacterTyped(keyChar)
                                     isAltActive = false
+                                    if (isShiftActive) isShiftActive = false
                                 }
                             }
                         )
@@ -323,8 +359,9 @@ fun BBKey2FullKeyboard(
                                     onShortcutTriggered(char)
                                     isSpeedKeyActive = false
                                 } else {
-                                    onCommitText(keyChar)
+                                    handleCharacterTyped(keyChar)
                                     isAltActive = false
+                                    if (isShiftActive) isShiftActive = false
                                 }
                             }
                         )
@@ -336,8 +373,18 @@ fun BBKey2FullKeyboard(
                         fontSize = fontSizeSp,
                         modifier = Modifier.weight(1.25f),
                         isSpecial = true,
-                        onClick = { onDelete() },
-                        onSwipeLeft = { onSwipeLeftDeleteWord() }
+                        onClick = {
+                            onDelete()
+                            if (localWordBuffer.isNotEmpty()) {
+                                localWordBuffer = localWordBuffer.dropLast(1)
+                            }
+                            refreshSuggestions(localWordBuffer, localPrevWord)
+                        },
+                        onSwipeLeft = {
+                            onSwipeLeftDeleteWord()
+                            localWordBuffer = ""
+                            refreshSuggestions("", localPrevWord)
+                        }
                     )
                 }
             }
@@ -367,12 +414,11 @@ fun BBKey2FullKeyboard(
                     fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.1f),
                     onClick = {
-                        onCommitText(if (isAltActive) "$" else "0")
+                        handleCharacterTyped(if (isAltActive) "$" else "0")
                         isAltActive = false
                     }
                 )
 
-                // SPACEBAR (Long press to initiate Cursor Scrubbing Trackpad)
                 Box(
                     modifier = Modifier
                         .weight(4.4f)
@@ -390,6 +436,9 @@ fun BBKey2FullKeyboard(
                                         isSpaceScrubbing = false
                                     } else if (released) {
                                         onSpace()
+                                        if (localWordBuffer.isNotEmpty()) localPrevWord = localWordBuffer
+                                        localWordBuffer = ""
+                                        refreshSuggestions("", localPrevWord)
                                     }
                                 },
                                 onLongPress = {
@@ -442,7 +491,12 @@ fun BBKey2FullKeyboard(
                     fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.3f),
                     isSpecial = true,
-                    onClick = { onEnter() }
+                    onClick = {
+                        onEnter()
+                        localWordBuffer = ""
+                        localPrevWord = ""
+                        refreshSuggestions("", "")
+                    }
                 )
             }
         }

@@ -5,9 +5,6 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -59,7 +56,11 @@ class MainActivity : ComponentActivity() {
         companionManager = BBCompanionManager(this)
 
         val productivityFilter = ProductivityFilter(this)
-        val allWhitelistedApps = productivityFilter.getFilteredApps()
+        val allInstalledApps = productivityFilter.getAllLaunchableApps()
+
+        // On first install, hide social media & games from the Home Screen by default,
+        // while keeping them available in Settings -> Allow/Remove Apps and the Apps Drawer!
+        prefs.initializeDefaultHomeFilter(allInstalledApps)
 
         setContent {
             var searchText by remember { mutableStateOf("") }
@@ -68,24 +69,22 @@ class MainActivity : ComponentActivity() {
             var wallpaperIdx by remember { mutableIntStateOf(prefs.wallpaperIndex) }
             var hiddenPackages by remember { mutableStateOf(prefs.getHiddenHomePackages()) }
 
-            // Active view overlays inside the 3:2 viewport: "HOME", "DRAWER", "SETTINGS", "COMPANIONS"
             var activeScreen by remember { mutableStateOf("HOME") }
             var isSliderDocOpen by remember { mutableStateOf(false) }
 
-            // First-Run Prompt to install required BlackBerry Hub+ companion apps
             var showCompanionPrompt by remember {
                 mutableStateOf(!prefs.hasDismissedCompanionPrompt && companionManager.getMissingCount() > 0)
             }
 
-            val homeApps = remember(searchText, allWhitelistedApps, hiddenPackages) {
-                val visible = allWhitelistedApps.filterNot { hiddenPackages.contains(it.packageName) }
+            val homeApps = remember(searchText, allInstalledApps, hiddenPackages) {
+                val visible = allInstalledApps.filterNot { hiddenPackages.contains(it.packageName) }
                 if (searchText.isBlank()) visible
                 else visible.filter { it.label.contains(searchText, ignoreCase = true) }
             }
 
-            val drawerApps = remember(searchText, allWhitelistedApps) {
-                if (searchText.isBlank()) allWhitelistedApps
-                else allWhitelistedApps.filter { it.label.contains(searchText, ignoreCase = true) }
+            val drawerApps = remember(searchText, allInstalledApps) {
+                if (searchText.isBlank()) allInstalledApps
+                else allInstalledApps.filter { it.label.contains(searchText, ignoreCase = true) }
             }
 
             fun launchPackage(packageName: String) {
@@ -97,7 +96,7 @@ class MainActivity : ComponentActivity() {
             BBExperienceApp(
                 homeApps = homeApps,
                 drawerApps = drawerApps,
-                allApps = allWhitelistedApps,
+                allApps = allInstalledApps,
                 searchQuery = searchText,
                 keyboardScale = keyboardScale,
                 themeMode = themeMode,
@@ -145,7 +144,7 @@ class MainActivity : ComponentActivity() {
                     if (customPkg != null) {
                         launchPackage(customPkg)
                     } else {
-                        allWhitelistedApps.firstOrNull { it.label.startsWith(keyChar, ignoreCase = true) }
+                        allInstalledApps.firstOrNull { it.label.startsWith(keyChar, ignoreCase = true) }
                             ?.let { launchPackage(it.packageName) }
                     }
                 },
@@ -194,9 +193,9 @@ fun BBExperienceApp(
     onOpenDefaultLauncherSettings: () -> Unit
 ) {
     val wallpapers = listOf(
-        Brush.verticalGradient(listOf(Color(0xFF0E131B), Color(0xFF172233), Color(0xFF0A0C10))), // Classic BB Cobalt
-        Brush.verticalGradient(listOf(Color(0xFF141518), Color(0xFF23262E), Color(0xFF0B0C0E))), // KEY2 Carbon Weave
-        Brush.verticalGradient(listOf(Color(0xFF1B1510), Color(0xFF2D2318), Color(0xFF0E0B08)))  // Porsche Design Bronze
+        Brush.verticalGradient(listOf(Color(0xFF0E131B), Color(0xFF172233), Color(0xFF0A0C10))),
+        Brush.verticalGradient(listOf(Color(0xFF141518), Color(0xFF23262E), Color(0xFF0B0C0E))),
+        Brush.verticalGradient(listOf(Color(0xFF1B1510), Color(0xFF2D2318), Color(0xFF0E0B08)))
     )
     val selectedBg = wallpapers[wallpaperIndex % wallpapers.size]
 
@@ -207,30 +206,35 @@ fun BBExperienceApp(
         SimpleDateFormat("EEE, MMM d", Locale.getDefault()).format(Date())
     }
 
+    val currentWord = remember(searchQuery) { searchQuery.substringAfterLast(' ') }
+    val previousWord = remember(searchQuery) {
+        if (' ' in searchQuery) searchQuery.substringBeforeLast(' ').substringAfterLast(' ') else ""
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFF08090B))
+            .systemBarsPadding()
     ) {
-        // TOP 3:2 VIEWPORT (BlackBerry KEY2 Display Aspect Ratio)
+        // ADAPTIVE UPPER VIEWPORT
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1.5f)
+                .weight(1f)
                 .background(selectedBg)
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // 1. TRANSLUCENT BLACKBERRY OS7 / BB10 TOP BANNER
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0x66000000), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .padding(horizontal = 8.dp, vertical = 5.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -238,22 +242,21 @@ fun BBExperienceApp(
                         Text(
                             text = timeString,
                             color = Color.White,
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = dateString,
                             color = Color(0xFFB0B8C4),
-                            fontSize = 10.sp
+                            fontSize = 11.sp
                         )
                     }
 
                     Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Quick Nav Pills: Home, Drawer, Suite, Settings
                         TopNavChip("Home", activeScreen == "HOME") { onNavigateScreen("HOME") }
                         TopNavChip("Apps", activeScreen == "DRAWER") { onNavigateScreen("DRAWER") }
                         TopNavChip("Suite", activeScreen == "COMPANIONS") { onNavigateScreen("COMPANIONS") }
@@ -261,39 +264,41 @@ fun BBExperienceApp(
                     }
                 }
 
-                // Type-to-Search Filter Bar (if typing on home)
                 if (searchQuery.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 4.dp)
-                            .background(Color(0x991C222D), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(top = 6.dp)
+                            .background(Color(0x991C222D), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Search: $searchQuery", color = Color(0xFFD4AF37), fontSize = 11.sp)
-                        Text("Clear", color = Color(0xFF70B0FF), fontSize = 11.sp, modifier = Modifier.clickable { onUpdateSearch("") })
+                        Text("Search: $searchQuery", color = Color(0xFFD4AF37), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            text = "Clear ✕",
+                            color = Color(0xFF70B0FF),
+                            fontSize = 11.sp,
+                            modifier = Modifier.clickable { onUpdateSearch("") }
+                        )
                     }
                 }
 
-                // 2. MAIN VIEWPORT CONTENT
-                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 4.dp)) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 6.dp)) {
                     when (activeScreen) {
                         "DRAWER" -> {
-                            // Full Customizable App Drawer
                             LazyVerticalGrid(
                                 columns = GridCells.Fixed(4),
                                 modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 items(drawerApps) { app ->
-                                    BBAppTile(app = app, iconSize = 36) { onAppClick(app.packageName) }
+                                    BBAppTile(app = app, iconSize = 42) { onAppClick(app.packageName) }
                                 }
                             }
                         }
                         "COMPANIONS" -> {
-                            // BlackBerry Suite & Required Companion Apps Installer
                             BBCompanionSuiteScreen(
                                 suite = companionSuite,
                                 onInstall = onInstallCompanion,
@@ -301,13 +306,12 @@ fun BBExperienceApp(
                             )
                         }
                         "SETTINGS" -> {
-                            // Comprehensive Customization Settings
                             BBSettingsScreen(
                                 allApps = allApps,
                                 hiddenPackages = hiddenPackages,
                                 keyboardScale = keyboardScale,
                                 themeMode = themeMode,
-                                wallpaperIndex = wallpaperIndex,
+                                wallpaperIndex = wallpaperIdx,
                                 prefs = prefs,
                                 onScaleChange = onScaleChange,
                                 onThemeModeChange = onThemeModeChange,
@@ -319,7 +323,6 @@ fun BBExperienceApp(
                             )
                         }
                         else -> {
-                            // HOME: Paginated BlackBerry OS7 / BB10 Screen + Scrubbable Dots + Dock
                             BBPaginatedHomeView(
                                 homeApps = homeApps,
                                 allApps = allApps,
@@ -333,12 +336,11 @@ fun BBExperienceApp(
                 }
             }
 
-            // 3. RIGHT-EDGE SLIDER TAB (PRODUCTIVITY DOC)
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
-                    .width(14.dp)
-                    .height(68.dp)
+                    .width(16.dp)
+                    .height(74.dp)
                     .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
                     .background(Color(0xCCD4AF37))
                     .clickable {
@@ -351,15 +353,14 @@ fun BBExperienceApp(
                     text = if (isSliderDocOpen) "›" else "‹",
                     color = Color.Black,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 15.sp
                 )
             }
 
-           // Slide-Out Productivity DOC Drawer
             if (isSliderDocOpen) {
                 Box(modifier = Modifier.align(Alignment.CenterEnd)) {
                     BBSliderDocPanel(
-                        allApps = allApps,
+                        allApps = homeApps.ifEmpty { allApps },
                         onAppClick = {
                             onToggleSliderDoc(false)
                             onAppClick(it)
@@ -369,7 +370,6 @@ fun BBExperienceApp(
                 }
             }
 
-            // 4. FIRST-RUN PROMPT TO INSTALL REQUIRED BLACKBERRY APPS
             if (showCompanionPrompt) {
                 BBCompanionPromptOverlay(
                     suite = companionSuite,
@@ -379,7 +379,6 @@ fun BBExperienceApp(
             }
         }
 
-        // Metallic KEY2 Separation Fret
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -387,51 +386,43 @@ fun BBExperienceApp(
                 .background(Color(0xFF4B4F58))
         )
 
-        // Bottom Physical KEY2 Keyboard Deck (Resizable + Flow Glide Typing)
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .background(Color(0xFF08090A)),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            BBKey2FullKeyboard(
-                vibrator = vibrator,
-                predictionEngine = predictionEngine,
-                keyboardScale = keyboardScale,
-                onScaleChange = onScaleChange,
-                getCurrentWord = { searchQuery.substringAfterLast(' ') },
-                onCommitText = { char ->
-                    vibrator.keyClick()
-                    onUpdateSearch(searchQuery + char)
-                },
-                onDelete = {
-                    vibrator.keyClick()
-                    if (searchQuery.isNotEmpty()) {
-                        onUpdateSearch(searchQuery.dropLast(1))
-                    }
-                },
-                onSpace = {
-                    vibrator.keyClick()
-                    onUpdateSearch("$searchQuery ")
-                },
-                onEnter = {
-                    vibrator.keyClick()
-                    homeApps.firstOrNull()?.let { onAppClick(it.packageName) }
-                },
-                onSwipeLeftDeleteWord = {
-                    vibrator.keyClick()
-                    onUpdateSearch("")
-                },
-                onCursorMove = { vibrator.trackpadTick() },
-                onApplyPrediction = { word ->
-                    vibrator.keyClick()
-                    val prefix = if (' ' in searchQuery) searchQuery.substringBeforeLast(' ') + " " else ""
-                    onUpdateSearch("$prefix$word")
-                },
-                onShortcutTriggered = onShortcutTriggered
-            )
-        }
+        BBKey2FullKeyboard(
+            vibrator = vibrator,
+            predictionEngine = predictionEngine,
+            keyboardScale = keyboardScale,
+            onScaleChange = onScaleChange,
+            currentWordContext = currentWord,
+            previousWordContext = previousWord,
+            onCommitText = { char ->
+                vibrator.keyClick()
+                onUpdateSearch(searchQuery + char)
+            },
+            onDelete = {
+                vibrator.keyClick()
+                if (searchQuery.isNotEmpty()) {
+                    onUpdateSearch(searchQuery.dropLast(1))
+                }
+            },
+            onSpace = {
+                vibrator.keyClick()
+                onUpdateSearch("$searchQuery ")
+            },
+            onEnter = {
+                vibrator.keyClick()
+                homeApps.firstOrNull()?.let { onAppClick(it.packageName) }
+            },
+            onSwipeLeftDeleteWord = {
+                vibrator.keyClick()
+                onUpdateSearch("")
+            },
+            onCursorMove = { vibrator.trackpadTick() },
+            onApplyPrediction = { word ->
+                vibrator.keyClick()
+                val prefix = if (' ' in searchQuery) searchQuery.substringBeforeLast(' ') + " " else ""
+                onUpdateSearch("$prefix$word ")
+            },
+            onShortcutTriggered = onShortcutTriggered
+        )
     }
 }
 
@@ -442,7 +433,7 @@ fun TopNavChip(label: String, isSelected: Boolean, onClick: () -> Unit) {
             .clip(RoundedCornerShape(4.dp))
             .background(if (isSelected) Color(0xFFD4AF37) else Color(0x33FFFFFF))
             .clickable { onClick() }
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .padding(horizontal = 7.dp, vertical = 3.dp)
     ) {
         Text(
             text = label,
@@ -463,16 +454,15 @@ fun BBPaginatedHomeView(
     onAppClick: (String) -> Unit,
     onOpenCompanions: () -> Unit
 ) {
-    val appsPerPage = if (themeMode == "BB10") 8 else 12
+    val appsPerPage = if (themeMode == "BB10") 12 else 16
     val appPages = remember(homeApps, appsPerPage) {
         if (homeApps.isEmpty()) listOf(emptyList()) else homeApps.chunked(appsPerPage)
     }
 
-    // Page 0 = BlackBerry Hub / Active Peek, Pages 1..N = Home App Pages
     val totalPages = appPages.size + 1
     val pagerState = rememberPagerState(initialPage = 1) { totalPages }
     val scope = rememberCoroutineScope()
-    val dockApps = remember(allApps) { allApps.take(4) }
+    val dockApps = remember(homeApps) { homeApps.take(4) }
 
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -483,20 +473,19 @@ fun BBPaginatedHomeView(
             modifier = Modifier.weight(1f).fillMaxWidth()
         ) { pageIdx ->
             if (pageIdx == 0) {
-                // Leftmost Page: BlackBerry Hub Integration
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
                         .background(Color(0x8812151C), RoundedCornerShape(8.dp))
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.SpaceBetween
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.SpaceEvenly
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("BLACKBERRY HUB", color = Color(0xFFD9383A), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        Text("Install BB Apps ›", color = Color(0xFF70B0FF), fontSize = 10.sp, modifier = Modifier.clickable { onOpenCompanions() })
+                        Text("BLACKBERRY HUB", color = Color(0xFFD9383A), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Install BB Apps ›", color = Color(0xFF70B0FF), fontSize = 11.sp, modifier = Modifier.clickable { onOpenCompanions() })
                     }
                     HubActionRow("✉  Unified Inbox (BB Hub)", "com.blackberry.hub", allApps, onAppClick, onOpenCompanions)
                     HubActionRow("📅  Enterprise Calendar", "com.blackberry.calendar", allApps, onAppClick, onOpenCompanions)
@@ -504,7 +493,7 @@ fun BBPaginatedHomeView(
                 }
             } else {
                 val pageItems = appPages.getOrElse(pageIdx - 1) { emptyList() }
-                val rowCount = if (themeMode == "BB10") 2 else 3
+                val rowCount = if (themeMode == "BB10") 3 else 4
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.SpaceEvenly
@@ -521,12 +510,12 @@ fun BBPaginatedHomeView(
                                 if (app != null) {
                                     BBAppTile(
                                         app = app,
-                                        iconSize = if (themeMode == "BB10") 40 else 34,
+                                        iconSize = if (themeMode == "BB10") 44 else 40,
                                         isCardStyle = themeMode == "BB10",
                                         onClick = { onAppClick(app.packageName) }
                                     )
                                 } else {
-                                    Spacer(modifier = Modifier.width(62.dp))
+                                    Spacer(modifier = Modifier.width(68.dp))
                                 }
                             }
                         }
@@ -535,7 +524,6 @@ fun BBPaginatedHomeView(
             }
         }
 
-        // Scrubbable Page Indicator Dots
         BBScrubbableDots(
             totalPages = totalPages,
             currentPage = pagerState.currentPage,
@@ -543,18 +531,17 @@ fun BBPaginatedHomeView(
             onSelectPage = { target -> scope.launch { pagerState.scrollToPage(target) } }
         )
 
-        // Translucent BB OS7 Bottom Dock Tray
         if (dockApps.isNotEmpty()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0x77000000), RoundedCornerShape(8.dp))
-                    .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp))
-                    .padding(vertical = 3.dp, horizontal = 6.dp),
+                    .background(Color(0x77000000), RoundedCornerShape(10.dp))
+                    .border(0.5.dp, Color(0x33FFFFFF), RoundedCornerShape(10.dp))
+                    .padding(vertical = 5.dp, horizontal = 8.dp),
                 horizontalArrangement = Arrangement.SpaceAround
             ) {
                 dockApps.forEach { app ->
-                    BBAppTile(app = app, iconSize = 30, showLabel = false) { onAppClick(app.packageName) }
+                    BBAppTile(app = app, iconSize = 36, showLabel = false) { onAppClick(app.packageName) }
                 }
             }
         }
@@ -577,15 +564,15 @@ fun HubActionRow(
             .clickable {
                 if (installed) onAppClick(targetPkg) else onInstallRedirect()
             }
-            .padding(horizontal = 8.dp, vertical = 6.dp),
+            .padding(horizontal = 10.dp, vertical = 9.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         Text(
             text = if (installed) "OPEN" else "GET APP",
             color = if (installed) Color(0xFF4ADE80) else Color(0xFFD4AF37),
-            fontSize = 9.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold
         )
     }
@@ -604,7 +591,7 @@ fun BBScrubbableDots(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(18.dp)
+            .height(22.dp)
             .onSizeChanged { rowWidthPx = it.width.coerceAtLeast(1) }
             .pointerInput(totalPages) {
                 detectHorizontalDragGestures { change, _ ->
@@ -630,7 +617,7 @@ fun BBScrubbableDots(
                         vibrator.keyClick()
                         onSelectPage(i)
                     }
-                    .size(width = if (selected) 12.dp else 5.dp, height = 5.dp)
+                    .size(width = if (selected) 14.dp else 6.dp, height = 6.dp)
                     .clip(CircleShape)
                     .background(
                         when {
@@ -647,7 +634,7 @@ fun BBScrubbableDots(
 @Composable
 fun BBAppTile(
     app: AppItem,
-    iconSize: Int = 34,
+    iconSize: Int = 40,
     showLabel: Boolean = true,
     isCardStyle: Boolean = false,
     onClick: () -> Unit
@@ -655,11 +642,11 @@ fun BBAppTile(
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .width(62.dp)
+            .width(68.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(if (isCardStyle) Color(0x551E232D) else Color.Transparent)
             .clickable { onClick() }
-            .padding(vertical = 2.dp)
+            .padding(vertical = 3.dp)
     ) {
         val bitmap = remember(app.icon) { app.icon.toBitmap(96, 96).asImageBitmap() }
         Image(
@@ -667,14 +654,14 @@ fun BBAppTile(
             contentDescription = app.label,
             modifier = Modifier
                 .size(iconSize.dp)
-                .clip(RoundedCornerShape(8.dp))
+                .clip(RoundedCornerShape(9.dp))
         )
         if (showLabel) {
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(3.dp))
             Text(
                 text = app.label,
                 color = Color.White,
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center
@@ -691,11 +678,11 @@ fun BBSliderDocPanel(
 ) {
     Column(
         modifier = Modifier
-            .width(190.dp)
+            .width(210.dp)
             .fillMaxHeight()
             .background(Color(0xEE11141B))
             .border(1.dp, Color(0xFFD4AF37))
-            .padding(10.dp),
+            .padding(12.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
@@ -703,25 +690,25 @@ fun BBSliderDocPanel(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("PRODUCTIVITY DOC", color = Color(0xFFD4AF37), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-            Text("✕", color = Color.White, fontSize = 12.sp, modifier = Modifier.clickable { onClose() })
+            Text("PRODUCTIVITY DOC", color = Color(0xFFD4AF37), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("✕", color = Color.White, fontSize = 14.sp, modifier = Modifier.clickable { onClose() })
         }
 
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("PINNED QUICK TOOLS", color = Color(0xFF8C929E), fontSize = 9.sp)
-            allApps.take(4).forEach { app ->
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("PINNED QUICK TOOLS", color = Color(0xFF8C929E), fontSize = 10.sp)
+            allApps.take(5).forEach { app ->
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF1C212B), RoundedCornerShape(6.dp))
                         .clickable { onAppClick(app.packageName) }
-                        .padding(6.dp),
+                        .padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val bmp = remember(app.icon) { app.icon.toBitmap(64, 64).asImageBitmap() }
-                    Image(bitmap = bmp, contentDescription = null, modifier = Modifier.size(20.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(app.label, color = Color.White, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Image(bitmap = bmp, contentDescription = null, modifier = Modifier.size(22.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(app.label, color = Color.White, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -729,7 +716,7 @@ fun BBSliderDocPanel(
         Text(
             text = "Tip: Press Speed Key (:::) + Letter for instant launch.",
             color = Color(0xFF8C929E),
-            fontSize = 9.sp
+            fontSize = 10.sp
         )
     }
 }
@@ -744,14 +731,14 @@ fun BBCompanionSuiteScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0x99101318), RoundedCornerShape(8.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
             Text(
                 text = "BLACKBERRY COMPANION SUITE",
                 color = Color(0xFFD4AF37),
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -760,13 +747,13 @@ fun BBCompanionSuiteScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1A1E26), RoundedCornerShape(6.dp))
-                    .padding(8.dp),
+                    .padding(10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text(item.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    Text(item.subtitle, color = Color(0xFF9CA3AF), fontSize = 9.sp)
+                    Text(item.title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(item.subtitle, color = Color(0xFF9CA3AF), fontSize = 10.sp)
                 }
                 Button(
                     onClick = {
@@ -775,13 +762,13 @@ fun BBCompanionSuiteScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (item.isInstalled) Color(0xFF1E3A2F) else Color(0xFFD4AF37)
                     ),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                    modifier = Modifier.height(26.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.height(30.dp)
                 ) {
                     Text(
                         text = if (item.isInstalled) "Installed" else "Install",
                         color = if (item.isInstalled) Color(0xFF4ADE80) else Color.Black,
-                        fontSize = 10.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -800,7 +787,7 @@ fun BBCompanionPromptOverlay(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xDD080A0E))
-            .padding(12.dp),
+            .padding(14.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -808,16 +795,16 @@ fun BBCompanionPromptOverlay(
                 .fillMaxWidth()
                 .background(Color(0xFF161A22), RoundedCornerShape(10.dp))
                 .border(1.dp, Color(0xFFD4AF37), RoundedCornerShape(10.dp))
-                .padding(10.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("INSTALL REQUIRED BB APPS", color = Color(0xFFD4AF37), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Text("Skip ✕", color = Color(0xFF9CA3AF), fontSize = 10.sp, modifier = Modifier.clickable { onDismiss() })
+                Text("INSTALL REQUIRED BB APPS", color = Color(0xFFD4AF37), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("Skip ✕", color = Color(0xFF9CA3AF), fontSize = 11.sp, modifier = Modifier.clickable { onDismiss() })
             }
 
             suite.filter { !it.isInstalled }.take(3).forEach { item ->
@@ -825,24 +812,24 @@ fun BBCompanionPromptOverlay(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF202530), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(item.title, color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                        Text(item.subtitle, color = Color(0xFF9CA3AF), fontSize = 8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(item.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text(item.subtitle, color = Color(0xFF9CA3AF), fontSize = 9.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Text(
                         text = "INSTALL",
                         color = Color.Black,
-                        fontSize = 9.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFFD4AF37))
                             .clickable { onInstall(item.packageName) }
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
                     )
                 }
             }
@@ -872,41 +859,39 @@ fun BBSettingsScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xCC101318), RoundedCornerShape(8.dp))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // System Activation Buttons
         item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onOpenLauncherSettings,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD4AF37)),
-                    modifier = Modifier.weight(1f).height(30.dp),
+                    modifier = Modifier.weight(1f).height(34.dp),
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    Text("Set Default Home", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("Set Default Home", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
                 Button(
                     onClick = onOpenKeyboardSettings,
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                    modifier = Modifier.weight(1f).height(30.dp),
+                    modifier = Modifier.weight(1f).height(34.dp),
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    Text("Enable KEY2 IME", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("Enable KEY2 IME", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Theme Style (BB OS7 vs BB10) & Wallpaper
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1A1E26), RoundedCornerShape(6.dp))
-                    .padding(8.dp)
+                    .padding(10.dp)
             ) {
-                Text("HOME STYLE & WALLPAPER", color = Color(0xFFD4AF37), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(4.dp))
+                Text("HOME STYLE & WALLPAPER", color = Color(0xFFD4AF37), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(6.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     TopNavChip("BB OS7 Grid", themeMode == "BBOS7") { onThemeModeChange("BBOS7") }
                     TopNavChip("BB10 Cards", themeMode == "BB10") { onThemeModeChange("BB10") }
@@ -917,50 +902,48 @@ fun BBSettingsScreen(
             }
         }
 
-        // Resizable Keyboard Scale Slider
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1A1E26), RoundedCornerShape(6.dp))
-                    .padding(8.dp)
+                    .padding(10.dp)
             ) {
                 Text(
                     text = "KEYBOARD SIZE: ${(keyboardScale * 100).toInt()}%",
                     color = Color(0xFFD4AF37),
-                    fontSize = 10.sp,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Slider(
                     value = keyboardScale,
                     onValueChange = onScaleChange,
                     valueRange = 0.75f..1.35f,
-                    modifier = Modifier.height(24.dp)
+                    modifier = Modifier.height(28.dp)
                 )
             }
         }
 
-        // Speed Key Shortcut Customizer
         item {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1A1E26), RoundedCornerShape(6.dp))
-                    .padding(8.dp)
+                    .padding(10.dp)
             ) {
-                Text("SPEED KEY (:::) SHORTCUTS", color = Color(0xFFD4AF37), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text("SPEED KEY (:::) SHORTCUTS", color = Color(0xFFD4AF37), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Row(
-                    modifier = Modifier.padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier.padding(vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf("E", "C", "N", "M", "W", "B").forEach { k ->
                         TopNavChip("Key $k", selectedShortcutKey == k) { selectedShortcutKey = k }
                     }
                 }
                 val currentAssigned = prefs.getShortcutPackage(selectedShortcutKey) ?: "Auto (First '$selectedShortcutKey' App)"
-                Text("Current [$selectedShortcutKey]: $currentAssigned", color = Color(0xFF9CA3AF), fontSize = 9.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Current [$selectedShortcutKey]: $currentAssigned", color = Color(0xFF9CA3AF), fontSize = 10.sp)
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     allApps.take(3).forEach { app ->
                         TopNavChip(app.label.take(8), prefs.getShortcutPackage(selectedShortcutKey) == app.packageName) {
                             onSetShortcut(selectedShortcutKey, app.packageName)
@@ -971,9 +954,8 @@ fun BBSettingsScreen(
             }
         }
 
-        // Allow / Remove Apps from Home Screen
         item {
-            Text("ALLOW / REMOVE APPS ON HOME SCREEN", color = Color(0xFFD4AF37), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            Text("ALLOW / REMOVE APPS ON HOME SCREEN (ALL APPS)", color = Color(0xFFD4AF37), fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
         items(allApps) { app ->
             val isVisible = !hiddenPackages.contains(app.packageName)
@@ -981,15 +963,20 @@ fun BBSettingsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF1A1E26), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(app.label, color = Color.White, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(app.label, color = Color.White, fontSize = 12.sp)
+                    if (app.isSocialOrGame) {
+                        Text("Social / Media (Hidden by default)", color = Color(0xFF9CA3AF), fontSize = 9.sp)
+                    }
+                }
                 Switch(
                     checked = isVisible,
                     onCheckedChange = { onToggleHomeApp(app.packageName, it) },
-                    modifier = Modifier.height(24.dp)
+                    modifier = Modifier.height(26.dp)
                 )
             }
         }
