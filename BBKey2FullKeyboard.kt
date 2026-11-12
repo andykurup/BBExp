@@ -19,7 +19,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -28,6 +31,8 @@ import kotlinx.coroutines.delay
 fun BBKey2FullKeyboard(
     vibrator: BBVibrator,
     predictionEngine: BBPredictionEngine,
+    keyboardScale: Float = 1.0f,
+    onScaleChange: ((Float) -> Unit)? = null,
     getCurrentWord: () -> String,
     onCommitText: (String) -> Unit,
     onDelete: () -> Unit,
@@ -47,12 +52,21 @@ fun BBKey2FullKeyboard(
     var isSpaceScrubbing by remember { mutableStateOf(false) }
     var scrubAccumulator by remember { mutableFloatStateOf(0f) }
 
+    // Flow / Glide Typing State
+    var deckSize by remember { mutableStateOf(IntSize(1, 1)) }
+    val flowTrail = remember { mutableStateListOf<Char>() }
+
+    val keyHeight: Dp = (44f * keyboardScale).coerceIn(32f, 60f).dp
+    val fontSizeSp = (13f * keyboardScale).coerceIn(10f, 17f).sp
+
     LaunchedEffect(Unit) {
         while (true) {
-            val word = getCurrentWord()
-            if (word != activeWord) {
-                activeWord = word
-                predictions = predictionEngine.getPredictions(word)
+            if (flowTrail.isEmpty()) {
+                val word = getCurrentWord()
+                if (word != activeWord) {
+                    activeWord = word
+                    predictions = predictionEngine.getPredictions(word)
+                }
             }
             delay(100)
         }
@@ -71,22 +85,60 @@ fun BBKey2FullKeyboard(
         "N" to ",", "M" to "."
     )
 
+    fun resolveKeyAtPosition(pos: Offset): Char? {
+        if (deckSize.width <= 1 || deckSize.height <= 1) return null
+        val normX = (pos.x / deckSize.width.toFloat()).coerceIn(0f, 0.999f)
+        val normY = (pos.y / deckSize.height.toFloat()).coerceIn(0f, 0.999f)
+        return when {
+            normY < 0.34f -> row1[(normX * 10).toInt().coerceIn(0, 9)].first()
+            normY < 0.67f -> row2[(normX * 9).toInt().coerceIn(0, 8)].first()
+            else -> {
+                val idx = ((normX - 0.12f) / 0.76f * 7).toInt()
+                if (idx in 0..6) row3[idx].first() else null
+            }
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF0C0D0F))
             .padding(horizontal = 4.dp, vertical = 2.dp)
     ) {
+        // Optional Drag Resize Handle for Keyboard Height
+        if (onScaleChange != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(10.dp)
+                    .pointerInput(keyboardScale) {
+                        detectDragGestures { _, dragAmount ->
+                            val deltaScale = -dragAmount.y / 300f
+                            onScaleChange((keyboardScale + deltaScale).coerceIn(0.75f, 1.35f))
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(36.dp)
+                        .height(3.dp)
+                        .background(Color(0xFF3E424B), RoundedCornerShape(2.dp))
+                )
+            }
+        }
+
+        // 1. GBOARD / BB SUGGESTION STRIP (Swipe-Up to Select + Flow Candidates)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(38.dp)
+                .height(36.dp)
                 .background(Color(0xFF14161A)),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .width(44.dp)
+                    .width(42.dp)
                     .fillMaxHeight()
                     .clickable {
                         vibrator.keyClick()
@@ -94,32 +146,41 @@ fun BBKey2FullKeyboard(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Text(if (showEmojiSheet) "ABC" else "😀", fontSize = 16.sp, color = Color.White)
+                Text(if (showEmojiSheet) "ABC" else "😀", fontSize = 15.sp, color = Color.White)
             }
 
-            predictions.take(3).forEach { cand ->
-                var dragY by remember { mutableFloatStateOf(0f) }
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .pointerInput(cand) {
-                            detectDragGestures(
-                                onDrag = { _, delta -> dragY += delta.y },
-                                onDragEnd = {
-                                    if (dragY < -20f) {
-                                        onApplyPrediction(cand)
+            if (predictions.isEmpty() && flowTrail.isNotEmpty()) {
+                Text(
+                    text = "Flow: ${flowTrail.joinToString("")}",
+                    color = Color(0xFFD4AF37),
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 8.dp)
+                )
+            } else {
+                predictions.take(3).forEach { cand ->
+                    var dragY by remember { mutableFloatStateOf(0f) }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .pointerInput(cand) {
+                                detectDragGestures(
+                                    onDrag = { _, delta -> dragY += delta.y },
+                                    onDragEnd = {
+                                        if (dragY < -18f) {
+                                            onApplyPrediction(cand)
+                                        }
+                                        dragY = 0f
                                     }
-                                    dragY = 0f
-                                }
-                            )
+                                )
+                            }
+                            .clickable { onApplyPrediction(cand) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("▲", fontSize = 6.sp, color = Color(0xFFD4AF37))
+                            Text(cand, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
-                        .clickable { onApplyPrediction(cand) },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("▲", fontSize = 7.sp, color = Color(0xFFD4AF37))
-                        Text(cand, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     }
                 }
             }
@@ -134,98 +195,151 @@ fun BBKey2FullKeyboard(
                 }
             )
         } else {
-            FretBar()
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                row1.forEach { char ->
-                    val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
-                    BBKeyCap(
-                        char = keyChar,
-                        subChar = altMap[char],
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            if (isSpeedKeyActive) {
-                                vibrator.keyClick()
-                                onShortcutTriggered(char)
-                                isSpeedKeyActive = false
-                            } else {
-                                onCommitText(keyChar)
-                                isAltActive = false
-                            }
-                        }
-                    )
-                }
-            }
-
-            FretBar()
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                row2.forEach { char ->
-                    val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
-                    BBKeyCap(
-                        char = keyChar,
-                        subChar = altMap[char],
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            if (isSpeedKeyActive) {
-                                vibrator.keyClick()
-                                onShortcutTriggered(char)
-                                isSpeedKeyActive = false
-                            } else {
-                                onCommitText(keyChar)
-                                isAltActive = false
-                            }
-                        }
-                    )
-                }
-            }
-
-            FretBar()
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                BBKeyCap(
-                    char = "⇧",
-                    modifier = Modifier.weight(1.25f),
-                    isSpecial = true,
-                    isActive = isShiftActive,
-                    onClick = {
-                        vibrator.keyClick()
-                        isShiftActive = !isShiftActive
+            // Letter Rows Container with Flow/Glide Gesture Detection
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { deckSize = it }
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { startOffset ->
+                                flowTrail.clear()
+                                resolveKeyAtPosition(startOffset)?.let {
+                                    flowTrail.add(it)
+                                    vibrator.trackpadTick()
+                                }
+                            },
+                            onDrag = { change, _ ->
+                                change.consume()
+                                val keyChar = resolveKeyAtPosition(change.position)
+                                if (keyChar != null && flowTrail.lastOrNull() != keyChar) {
+                                    flowTrail.add(keyChar)
+                                    vibrator.trackpadTick()
+                                    predictions = predictionEngine.matchFlowGesture(flowTrail)
+                                }
+                            },
+                            onDragEnd = {
+                                if (flowTrail.size >= 2) {
+                                    val matches = predictionEngine.matchFlowGesture(flowTrail)
+                                    val bestWord = matches.firstOrNull()
+                                    if (bestWord != null) {
+                                        val formatted = if (isShiftActive) {
+                                            bestWord.replaceFirstChar { it.uppercase() }
+                                        } else bestWord
+                                        onCommitText("$formatted ")
+                                        predictions = matches
+                                        isShiftActive = false
+                                    }
+                                }
+                                flowTrail.clear()
+                            },
+                            onDragCancel = { flowTrail.clear() }
+                        )
                     }
-                )
-
-                row3.forEach { char ->
-                    val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
-                    BBKeyCap(
-                        char = keyChar,
-                        subChar = altMap[char],
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            if (isSpeedKeyActive) {
-                                vibrator.keyClick()
-                                onShortcutTriggered(char)
-                                isSpeedKeyActive = false
-                            } else {
-                                onCommitText(keyChar)
-                                isAltActive = false
+            ) {
+                FretBar()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    row1.forEach { char ->
+                        val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
+                        BBKeyCap(
+                            char = keyChar,
+                            subChar = altMap[char],
+                            keyHeight = keyHeight,
+                            fontSize = fontSizeSp,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (isSpeedKeyActive) {
+                                    vibrator.keyClick()
+                                    onShortcutTriggered(char)
+                                    isSpeedKeyActive = false
+                                } else {
+                                    onCommitText(keyChar)
+                                    isAltActive = false
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                 }
 
-                BBKeyCap(
-                    char = "⌫",
-                    modifier = Modifier.weight(1.25f),
-                    isSpecial = true,
-                    onClick = { onDelete() },
-                    onSwipeLeft = { onSwipeLeftDeleteWord() }
-                )
+                FretBar()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    row2.forEach { char ->
+                        val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
+                        BBKeyCap(
+                            char = keyChar,
+                            subChar = altMap[char],
+                            keyHeight = keyHeight,
+                            fontSize = fontSizeSp,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (isSpeedKeyActive) {
+                                    vibrator.keyClick()
+                                    onShortcutTriggered(char)
+                                    isSpeedKeyActive = false
+                                } else {
+                                    onCommitText(keyChar)
+                                    isAltActive = false
+                                }
+                            }
+                        )
+                    }
+                }
+
+                FretBar()
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    BBKeyCap(
+                        char = "⇧",
+                        keyHeight = keyHeight,
+                        fontSize = fontSizeSp,
+                        modifier = Modifier.weight(1.25f),
+                        isSpecial = true,
+                        isActive = isShiftActive,
+                        onClick = {
+                            vibrator.keyClick()
+                            isShiftActive = !isShiftActive
+                        }
+                    )
+
+                    row3.forEach { char ->
+                        val keyChar = resolveChar(char, isAltActive, isShiftActive, altMap)
+                        BBKeyCap(
+                            char = keyChar,
+                            subChar = altMap[char],
+                            keyHeight = keyHeight,
+                            fontSize = fontSizeSp,
+                            modifier = Modifier.weight(1f),
+                            onClick = {
+                                if (isSpeedKeyActive) {
+                                    vibrator.keyClick()
+                                    onShortcutTriggered(char)
+                                    isSpeedKeyActive = false
+                                } else {
+                                    onCommitText(keyChar)
+                                    isAltActive = false
+                                }
+                            }
+                        )
+                    }
+
+                    BBKeyCap(
+                        char = "⌫",
+                        keyHeight = keyHeight,
+                        fontSize = fontSizeSp,
+                        modifier = Modifier.weight(1.25f),
+                        isSpecial = true,
+                        onClick = { onDelete() },
+                        onSwipeLeft = { onSwipeLeftDeleteWord() }
+                    )
+                }
             }
 
             FretBar()
@@ -235,6 +349,8 @@ fun BBKey2FullKeyboard(
             ) {
                 BBKeyCap(
                     char = "alt",
+                    keyHeight = keyHeight,
+                    fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.2f),
                     isSpecial = true,
                     isActive = isAltActive,
@@ -247,6 +363,8 @@ fun BBKey2FullKeyboard(
                 BBKeyCap(
                     char = if (isAltActive) "$" else "0",
                     subChar = if (!isAltActive) "$" else null,
+                    keyHeight = keyHeight,
+                    fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.1f),
                     onClick = {
                         onCommitText(if (isAltActive) "$" else "0")
@@ -254,10 +372,11 @@ fun BBKey2FullKeyboard(
                     }
                 )
 
+                // SPACEBAR (Long press to initiate Cursor Scrubbing Trackpad)
                 Box(
                     modifier = Modifier
                         .weight(4.4f)
-                        .height(46.dp)
+                        .height(keyHeight)
                         .border(0.5.dp, Color(0xFF383A40), RoundedCornerShape(3.dp))
                         .background(
                             if (isSpaceScrubbing) Color(0xFF2C3E50) else Color(0xFF1F2125),
@@ -306,6 +425,8 @@ fun BBKey2FullKeyboard(
 
                 BBKeyCap(
                     char = ":::",
+                    keyHeight = keyHeight,
+                    fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.1f),
                     isSpecial = true,
                     isActive = isSpeedKeyActive,
@@ -317,6 +438,8 @@ fun BBKey2FullKeyboard(
 
                 BBKeyCap(
                     char = "↵",
+                    keyHeight = keyHeight,
+                    fontSize = fontSizeSp,
                     modifier = Modifier.weight(1.3f),
                     isSpecial = true,
                     onClick = { onEnter() }
@@ -352,6 +475,8 @@ fun FretBar() {
 fun BBKeyCap(
     char: String,
     subChar: String? = null,
+    keyHeight: Dp = 44.dp,
+    fontSize: androidx.compose.ui.unit.TextUnit = 13.sp,
     modifier: Modifier = Modifier,
     isSpecial: Boolean = false,
     isActive: Boolean = false,
@@ -368,7 +493,7 @@ fun BBKeyCap(
 
     Box(
         modifier = modifier
-            .height(46.dp)
+            .height(keyHeight)
             .border(0.6.dp, Color(0xFF383A42), RoundedCornerShape(3.dp))
             .background(baseColor, RoundedCornerShape(3.dp))
             .drawBehind {
@@ -408,7 +533,7 @@ fun BBKeyCap(
             Text(
                 text = char,
                 color = if (isActive) Color(0xFF70B0FF) else Color(0xFFF0F2F5),
-                fontSize = 14.sp,
+                fontSize = fontSize,
                 fontWeight = FontWeight.SemiBold
             )
         }
@@ -429,7 +554,7 @@ fun BBEmojiMatrix(onSelectEmoji: (String) -> Unit, onClose: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(200.dp)
+            .height(190.dp)
             .background(Color(0xFF14161A))
             .padding(6.dp)
     ) {

@@ -18,6 +18,7 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
     private lateinit var vibrator: BBVibrator
+    private lateinit var prefs: BBPreferences
     private val predictionEngine = BBPredictionEngine()
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
@@ -27,6 +28,7 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
     override fun onCreate() {
         super.onCreate()
         vibrator = BBVibrator(this)
+        prefs = BBPreferences(this)
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
     }
@@ -43,6 +45,7 @@ class BBKeyboardService : InputMethodService(), LifecycleOwner, SavedStateRegist
                 BBKey2FullKeyboard(
                     vibrator = vibrator,
                     predictionEngine = predictionEngine,
+                    keyboardScale = prefs.keyboardScale,
                     getCurrentWord = { getCurrentComposingWord() },
                     onCommitText = { text ->
                         vibrator.keyClick()
